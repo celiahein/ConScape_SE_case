@@ -1,0 +1,183 @@
+---
+title: "Create ConScape Inputs using 2021 HF data"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r}
+library(terra)
+library(sf)
+library(here)
+library(dplyr)
+library(tmap)
+library(gdalUtilities)
+library(fasterize)
+```
+
+
+## 1. Extract HF 2021 data for study area from gdb
+
+### a) Connect terra to gdb using a proxy
+
+Using a proxy means that the data are not read into memory.
+
+```{r}
+f <- "/Users/celia/Documents/ArcGIS/Projects/celia_HFI2021/HFI2021.gdb"
+v <- vect(f, proxy=TRUE)
+```
+### b) Define extent of study area
+
+- Import polygon of extent of area of interest (AOI) with the same crs as gdb
+
+```{r}
+AOI <- st_read(here::here("data/AOE_shp/Proposed Focus Area - connectivity.shp"))
+```
+
+Map the study area to double check
+
+```{r}
+tmap_mode("view")
+tm_shape(AOI) + tm_borders()
+```
+
+### c) Extract HF data for study area
+
+Extract data and convert to sf object 
+
+```{r}
+HF2021_SE <- query(v, extent=ext(AOI))
+HF2021_SE <- st_as_sf(HF2021_SE)
+HF2021_SE
+```
+
+### d) Clean HF data
+
+Code from Viviana's project
+
+```{r}
+ensure_multipolygons <- function(X) {
+    tmp1 <- tempfile(fileext = ".gpkg")
+    tmp2 <- tempfile(fileext = ".gpkg")
+    st_write(X, tmp1)
+    ogr2ogr(tmp1, tmp2, f = "GPKG", nlt = "MULTIPOLYGON")
+    Y <- st_read(tmp2)
+    st_sf(st_drop_geometry(X), geom = st_geometry(Y))
+}
+```
+
+```{r}
+HF2021_SE <- ensure_multipolygons(HF2021_SE)
+HF2021_SE <- st_make_valid(HF2021_SE)
+```
+
+### e) Export to .gpkg
+
+```{r}
+#st_write(HF2021_SE, here::here("data/HF2021_SE_CH.gpkg"), append=FALSE)
+```
+
+## 2. Add FU values
+
+Read in HF2021_Kainai from .gpkg (sf object)
+
+```{r}
+HF2021_SE <- st_read(here::here("data/HF2021_SE.gpkg"))
+```
+
+Import FU values (Marrec et al. 2020)
+
+```{r}
+FU_values <- readxl::read_excel(here::here("data/FU_values.xlsx"))
+#View(FU_values)
+```
+
+Check that HF categories match (I modified the list so that they match for this test file, and added category "NATURAL"). 
+
+I couldn't find exact information on "HARVEST-AREA-WHITE-ZONE" but took an educated guess that it means a Forest Harvest area < 4 years old.
+Also had a hard time finding appropriate info for "CAMP-INDUSTRIAL" and took a conservative approach and set it equal to "urban industrial"
+
+
+```{r}
+table(is.element(unique(HF2021_SE$FEATURE_TY), FU_values$FEATURE_TY))
+```
+
+Add F and U values to polygons based on their feature type. 
+
+```{r}
+HF2021_SE <- left_join(HF2021_SE, FU_values %>% select(FEATURE_TY, South_F, South_U), by = join_by(FEATURE_TY))
+```
+
+Add natural habitat as a polygon (based on AOI polygon)
+
+```{r}
+AOI_Feature <- AOI %>% 
+  mutate(FEATURE_TY="NATURAL", SOURCE="AOI", YEAR=NA, HFI_ID=NA, YEAR_SOURCE=NA, 
+         Shape_Length=NA, Shape_Area=NA, South_F=0, South_U=0) 
+st_geometry(AOI_Feature) <- "geom"
+Order <- Order <- match(names(HF2021_SE), names(AOI_Feature))
+AOI_Feature <- AOI_Feature[,Order]
+HF2021_SE <- rbind(HF2021_SE, AOI_Feature)
+```
+
+Create two new variables:
+
+- H = mean(F, U):   combined deviation from naturalness
+- Q = 1 - H:   degree of naturalness = habitat quality
+
+```{r}
+HF2021_SE <- HF2021_SE %>% mutate(H = (South_F+South_U)/2) %>% mutate(Q = 1 - H)
+head(HF2021_SE)
+```
+
+## 3. Rasterize habitat quality Q and derive resistance values
+
+```{r}
+template <- terra::rast(terra::ext(vect(AOI)), res = 1000)
+Q_stack <- terra::rast(fasterize(HF2021_SE, raster::raster(template), 
+                                 field="Q", by="FEATURE_TY"))
+```
+
+We use the fuzzy algebraic sum to combine the Q values for mixed pixels (Marrec et al. 2020):
+
+```{r}
+Q <- prod(Q_stack, na.rm=TRUE)
+#plot(Q)
+```
+
+Resistance values are now derived as a power function of H = 1 - Q (omitting the effects of water bodies and slope)
+
+```{r}
+R <- (2 - Q)^10
+range(values(R), na.rm=TRUE)
+```
+conductance <- 1/R
+
+The above function of Q can be supplied as the cost function in ConScape.
+
+## 4. Aggregate rasters using mean
+
+Here we use a factor of 4, to get 100 m resolution from rasters of 25 m
+
+I swapped out "mean" for "max" to take a more conservative approach regarding resistance
+
+```{r}
+R.2000 <- terra::aggregate(R, fact=2, fun="max")
+Q.2000 <- terra::aggregate(Q, fact=2, fun="mean")
+```
+
+```{r}
+Rasters.1000 <- c(Q, R)
+Rasters.2000 <- c(Q.2000, R.2000)
+#Rasters.25 <- c(Q, R)
+```
+
+## 5. Export rasters
+
+```{r}
+writeRaster(Rasters.1000, here::here("data/Rasters.1000.tif"), overwrite=TRUE)
+writeRaster(Rasters.2000, here::here("data/Rasters.2000.tif"), overwrite=TRUE)
+```
+
+

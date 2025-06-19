@@ -1,0 +1,64 @@
+---
+title: "Making figures"
+output: html_notebook
+---
+
+### Visualizing ConScape Output Maps
+
+```{r}
+library(terra)
+library(sf)
+```
+
+#### Habitat Functionality
+
+##### Load all maps and clean them up
+
+```{r}
+output_folder <- here::here("output/")
+
+mapfiles <- list.files(output_folder, pattern=".tif")
+map_list <- list()
+
+for(i in 1:length(mapfiles))
+  {
+    map_list[[i]] <- terra::rast(paste0(output_folder, "/", mapfiles[i]))
+  }
+names(map_list) <- mapfiles
+```
+
+```{r}
+AOI <- st_read(here::here("data/AOE_shp/Proposed Focus Area - connectivity.shp"))
+
+for(i in 1:length(map_list))
+  {
+  crs(map_list[[i]]) <- crs(AOI)
+  map_list[[i]]<- crop(map_list[[i]], AOI, mask=TRUE)
+  }
+```
+
+#### Plot maps
+
+At 1000 m resolution
+
+| alpha | Mean dispersal represented |
+|-------|----------------------------|
+| 1.133 | 1 km                       |
+| 0.451 | 5 km                       |
+| 0.237 | 11 km (badger)             |
+| 0.18  | 15 km (mule deer)          |
+
+```{r}
+for(i in 1:length(map_list))
+  {
+  plot_title <- names(map_list[[i]])
+  plot(map_list[[i]], plg=list(title= plot_title))
+  }
+```
+
+#### Plot habitat quality input map
+```{r}
+HFI <- terra::rast(here::here("data/Rasters.1000.tif"))
+plot(HFI[[1]])
+```
+

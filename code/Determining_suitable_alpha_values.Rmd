@@ -1,0 +1,125 @@
+---
+title: "Determining alpha values for ConScape"
+output:
+  html_document:
+    df_print: paged
+---
+
+### General distance transformation equation
+
+Visualize distance transformation equation
+
+x -> exp(-x * alpha)
+```{r}
+# Choose an alpha value
+alpha <- 2
+
+# Create a sequence of x values
+x_vals <- seq(0, 2, length.out = 500)
+
+# Left-hand side: y = x
+lhs <- x_vals
+
+# Right-hand side: y = exp(-alpha * x)
+rhs <- exp(-alpha * x_vals)
+
+# Plot both functions
+plot(x_vals, lhs, type = "l", col = "blue", lwd = 2, ylim = c(0, 1),
+     ylab = "y- influencial signal of source on target", xlab = "x- pixel distance between source and target", main = bquote(x == e^{-alpha * x} ~ "for" ~ alpha == .(alpha)))
+lines(x_vals, rhs, col = "red", lwd = 2)
+
+# Add a legend
+legend("topright", legend = c("y = x", bquote(y == e^{-alpha * x})),
+       col = c("blue", "red"), lwd = 2)
+
+```
+### Finding alpha for badger
+
+For badger, the literature says that they have an average dispersal of 11 km in western Canada. Let's assume our map resolution is 1000 m. 
+
+We'll assume that badger dispersal has a normal distribution. Make a normal distribution with 11 as the mean. 
+```{r}
+set.seed(123)  # for reproducibility
+x <- rnorm(1000, mean = 11, sd = 1)
+hist(x)
+```
+Find the cutoff where only 5% lies to the right (greater than alternative)
+```{r}
+qnorm(0.95, mean = 11, sd = 1)
+
+```
+Approximately, 95% of badgers disperse 12.64 km or less 
+
+I think we can use this distance to solve for the alpha value, if we assume that 95% of the signal is lost between source and target pixels at 12.64 km (also 12.64 pixels in our case)
+
+exp(−alpha*12.64)=0.05
+−alpha * 12.64= ln(0.05)
+alpha = - (ln(0.05)/12.64))
+
+```{r}
+alpha_badger <- -log(0.05) / 12.64
+paste0("Alpha value to use for badger is ", round(alpha_badger, 3))
+```
+Plot it
+```{r}
+# Parameters
+x_vals <- seq(0, 20, length.out = 500)
+y_vals <- exp(-alpha_badger * x_vals)
+
+# Plot
+plot(x_vals, y_vals, type = "l", col = "blue", lwd = 2,
+     main = expression(paste("Exponential Decay: ", y == e^{-alpha_badger * x})),
+     xlab = "Distance from source", ylab = "Signal strength", ylim = c(0, 1))
+
+# Highlight the 95% loss point
+abline(v = 12.64, col = "red", lty = 2)
+abline(h = 0.05, col = "red", lty = 2)
+points(12.64, 0.05, pch = 19, col = "red")
+text(12.64, 0.1, labels = "5% signal", pos = 4, col = "red")
+text(13.5, 0.3, labels = bquote(alpha_badger == .(round(alpha_badger, 3))), col = "darkgreen")
+
+```
+### Finding alpha for mule deer
+
+Do the same thing for the other species
+
+We want to model mule deer as having an average dispersal of 15 km. Again we'll assume a 1000 m map resolution
+```{r}
+
+paste0("Approx. 95% of mule deer disperse ", round(qnorm(0.95, mean = 15, sd = 1), 3), " km or less")
+```
+```{r}
+alpha_muledeer <- -log(0.05) / 16.645
+paste0("Alpha value to use for mule deer is ", round(alpha_muledeer, 3))
+```
+Plot it
+```{r}
+# Parameters
+x_vals <- seq(0, 20, length.out = 500)
+y_vals <- exp(-alpha_muledeer * x_vals)
+
+# Plot
+plot(x_vals, y_vals, type = "l", col = "blue", lwd = 2,
+     main = expression(paste("Exponential Decay: ", y == e^{-alpha_muledeer * x})),
+     xlab = "Distance from source", ylab = "Signal strength", ylim = c(0, 1))
+
+# Highlight the 95% loss point
+abline(v = 16.645, col = "red", lty = 2)
+abline(h = 0.05, col = "red", lty = 2)
+points(16.645, 0.05, pch = 19, col = "red")
+text(16.645, 0.1, labels = "5% signal", pos = 4, col = "red")
+text(13.5, 0.3, labels = bquote(alpha_muledeer == .(round(alpha_muledeer, 3))), col = "darkgreen")
+
+```
+
+### Extra alphas to model
+
+I also want to models representing average dispersals of 1 and 5 kms
+```{r}
+alpha_mean1km <- -log(0.05)/qnorm(0.95, mean = 1, sd = 1)
+alpha_mean1km
+
+alpha_mean5km <- -log(0.05)/qnorm(0.95, mean = 5, sd = 1)
+alpha_mean5km
+```
+
